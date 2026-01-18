@@ -65,7 +65,7 @@ with tab2:
         c2.plotly_chart(f_hist, width='stretch')
 
 with tab3:
-    st.subheader("🧬 Model Performance Evaluation (Target: Yt+3)")
+    st.subheader("🧬 Model Performance Evaluation")
     
     # CEK APAKAH ADA HASIL DARI CSV
     if use_csv and active_res is not None:
@@ -97,46 +97,82 @@ with tab3:
         if 'history' in res_data:
             st.plotly_chart(plot_loss_curve(res_data['history']), width='stretch')
 
+# --- TAB 4: RESULT & REKOMENDASI (Yt+3) ---
 with tab4:
     st.subheader("📈 Prediction Result & Explainable AI (SHAP)")
-    if use_csv:
-        # 1. Grafik Prediksi Harga
+    
+    if use_csv and active_res is not None:
+        # 1. Grafik Prediksi Harga dari CSV
         target_dates = pd.to_datetime(active_res['dates']) + pd.Timedelta(days=3)
         fig_csv = go.Figure()
         fig_csv.add_trace(go.Scatter(x=target_dates, y=active_res['preds'], 
-                                     name="Prediction Yt+3", line=dict(color='#2D6A4F')))
-        fig_csv.update_layout(title="Proyeksi Harga 3 Hari ke Depan", xaxis_title="Tanggal Target (H+3)")
+                                     name="Prediction Yt+3", line=dict(color='#2D6A4F', width=2)))
+        fig_csv.update_layout(title="Hasil Prediksi Harga Target (Yt+3)", xaxis_title="Tanggal Target")
         st.plotly_chart(fig_csv, width='stretch')
         
+        # 2. Fitur SHAP (Explainable AI)
         st.markdown("---")
-        st.write("### 🧠 Feature Importance (SHAP Values)")
+        st.write("### 🧠 Global Feature Importance (SHAP)")
         
-        # 2. Perhitungan SHAP secara Dinamis
-        with st.spinner("Menghitung kontribusi fitur (XAI)..."):
-            feature_names = ['Yt', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'X11']
+        with st.spinner("Menganalisis kontribusi fitur..."):
+            importance = engine.compute_shap(model, active_res['X_quant'], active_res['X_qual'])
             
-            # Memanggil fungsi SHAP dengan data yang benar dari session state
-            shap_importance = engine.compute_shap(model, active_res['X_quant'], active_res['X_qual'])
-            
-            if shap_importance is not None:
-                shap_df = pd.DataFrame({
-                    'Feature': feature_names,
-                    'Importance': shap_importance
-                }).sort_values(by='Importance', ascending=True)
-
-                fig_shap = px.bar(
-                    shap_df, 
-                    x='Importance', 
-                    y='Feature', 
-                    orientation='h',
-                    title="Kontribusi Fitur terhadap Prediksi Yt+3",
-                    color='Importance',
-                    color_continuous_scale='Greens'
-                )
-                st.plotly_chart(fig_shap, width='stretch')
-                st.info("Fitur dengan nilai SHAP tertinggi adalah variabel yang paling memengaruhi model.")
+            if importance is not None:
+                feat_names = ['Yt','X1','X2','X3','X4','X5','X6','X7','X8','X9','X10','X11']
+                shap_df = pd.DataFrame({'Feature': feat_names, 'Importance': importance}).sort_values('Importance')
+                
+                fig_s = px.bar(shap_df, x='Importance', y='Feature', orientation='h', 
+                               color='Importance', color_continuous_scale='Greens')
+                st.plotly_chart(fig_s, width='stretch')
+                
+                # Cek apakah pakai library asli atau simulasi
+                try:
+                    import shap
+                except ImportError:
+                    st.caption("ℹ️ Menampilkan estimasi kontribusi fitur (Mode Penyelamatan).")
             else:
-                st.error("Gagal menghitung SHAP. Pastikan library 'shap' sudah terinstal.")
+                st.error("Analisis XAI tidak tersedia.")
+
+        # 3. Strategi & Rekomendasi Investor (WAJIB ADA DI DALAM BLOK IF)
+        st.markdown("---")
+        st.subheader("💡 Strategi & Rekomendasi Investor")
+        
+        # Pastikan ada data prediksi sebelum menghitung
+        if len(active_res['preds']) >= 2:
+            last_pred = active_res['preds'][-1]
+            prev_pred = active_res['preds'][-2]
+            
+            # Hindari pembagian dengan nol
+            if prev_pred != 0:
+                change_pct = ((last_pred - prev_pred) / prev_pred) * 100
+            else:
+                change_pct = 0
+            
+            col_rec1, col_rec2 = st.columns([1, 2])
+            
+            with col_rec1:
+                if change_pct > 0.5:
+                    st.success(f"### 🟢 Rekomendasi: **BUY**")
+                    st.metric("Potensi Kenaikan", f"+{change_pct:.2f}%")
+                elif change_pct < -0.5:
+                    st.error(f"### 🔴 Rekomendasi: **SELL/WAIT**")
+                    st.metric("Potensi Penurunan", f"{change_pct:.2f}%")
+                else:
+                    st.warning(f"### 🟡 Rekomendasi: **HOLD**")
+                    st.metric("Perubahan Harga", f"{change_pct:.2f}%")
+
+            with col_rec2:
+                trend_text = 'Bullish (Naik)' if change_pct > 0 else 'Bearish (Turun)'
+                st.info(f"""
+                **Analisis Strategis untuk {ticker}:**
+                1. **Tren:** Model memproyeksikan harga {ticker} bergerak **{trend_text}** dalam 3 hari ke depan.
+                2. **Dasar Keputusan:** Rekomendasi ini didasarkan pada momentum perubahan harga prediksi $Y_{{t+3}}$ dibandingkan hari sebelumnya.
+                3. **Mitigasi Risiko:** Perhatikan variabel dengan nilai SHAP tertinggi di atas sebelum mengeksekusi transaksi.
+                """)
+        else:
+            st.warning("Data prediksi kurang dari 2 hari, tren tidak dapat dihitung.")
+
     else:
+        # Tampilan Default (Jika belum upload CSV)
         st.plotly_chart(plot_forecast_only(fut_data), width='stretch')
-        st.warning("Silakan jalankan prediksi massal di Tab 1 untuk melihat analisis SHAP.")
+        st.info("ℹ️ Silakan lakukan **Prediksi Massal** di Tab 1 untuk melihat analisis rekomendasi investor.")
